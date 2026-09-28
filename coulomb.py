@@ -6,7 +6,7 @@ ModelSpec`, which documents that U/V there are model parameters, not ab
 initio values).
 
 Interface: this module's job is to produce an `eri` tensor in exactly the
-shape `tensors.InteractionTensors.eri` expects -- (nw, nw, nw, nw), chemist
+shape `tensors.ActiveSpaceHamiltonian.eri` expects -- (nw, nw, nw, nw), chemist
 (pq|rs) notation, shared across spin sectors (see `tensors.py`'s module
 docstring for why a single spin-independent tensor is physically correct).
 That is deliberate: once implemented, `eri_from_wannier` below drops straight
@@ -79,7 +79,7 @@ def eri_from_wannier(
 
     Not implemented -- see the module docstring for what this needs. The
     returned tensor is meant to be dropped directly into
-    `tensors.InteractionTensors.eri` (added to, or replacing, the model
+    `tensors.ActiveSpaceHamiltonian.eri` (added to, or replacing, the model
     U/V terms `ham_builder.tensors_from_Hk` builds).
     """
     raise NotImplementedError(

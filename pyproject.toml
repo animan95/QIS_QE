@@ -16,10 +16,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
-# PySCF is not required to use this package -- it's an independent classical
-# reference (FCI on tensors.write_fcidump output) used to cross-check the
-# tensor core in tests/test_tensors.py::test_write_fcidump_matches_pyscf_fci,
-# and needed if you want to consume the FCIDUMP export yourself.
+# PySCF is not required to use the Wannier front end or the tensor core
+# itself -- it's needed for tensors.from_pyscf_casci (building an
+# ActiveSpaceHamiltonian from a PySCF CASCI/CASSCF object), and as an
+# independent classical reference (FCI, trans_rdm1, spin_square) that
+# tests/test_tensors.py and tests/test_solvers.py cross-check against.
 validate = ["pyscf>=2.3"]
 
 [tool.pytest.ini_options]

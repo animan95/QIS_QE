@@ -480,7 +480,7 @@ def build_uccsd_ansatz(nso: int, num_particles: Tuple[int, int], mapper):
 
 
 def qubit_and_uccsd_from_tensors(
-    t: "tensors.InteractionTensors",
+    t: "tensors.ActiveSpaceHamiltonian",
     num_particles: Tuple[int, int],
     *,
     mapper: str = "jw",
