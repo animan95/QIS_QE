@@ -123,9 +123,16 @@ def test_run_qeom_matches_pyscf_fci_energies():
 
     qeom_result = sv.run_qeom(ham, num_particles)
 
-    es, _ = fci.direct_spin1.FCI().kernel(ham.h1, ham.eri, ham.nw, num_particles, nroots=4)
+    es, vecs = fci.direct_spin1.FCI().kernel(ham.h1, ham.eri, ham.nw, num_particles, nroots=4)
     es = np.atleast_1d(es)
-    assert np.allclose(sorted(qeom_result.eigenvalues), sorted(es), atol=2e-4)
+    order = np.argsort(np.real(qeom_result.eigenvalues))
+    assert np.allclose(np.real(qeom_result.eigenvalues)[order], np.sort(np.real(es)), atol=2e-4)
+    spins_pyscf = np.array([
+        fci.spin_op.spin_square(v, ham.nw, num_particles)[0] for v in vecs
+    ])
+    spins_qeom = np.asarray(qeom_result.total_angular_momentum, dtype=float)[order]
+    pyscf_by_energy = spins_pyscf[np.argsort(np.real(es))]
+    assert np.allclose(spins_qeom, pyscf_by_energy, atol=5e-3)
 
 
 def test_transition_dipole_is_the_expected_contraction():

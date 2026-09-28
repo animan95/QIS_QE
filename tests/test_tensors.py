@@ -17,6 +17,22 @@ def hubbard_dimer_tensors(t: float = -1.0, U: float = 4.0) -> ts.InteractionTens
     return ts.tensors_from_Hk(cluster.H, spec)
 
 
+def test_subtract_hartree_fock_mean_field_recovers_the_core():
+    """h_KS = h_core + 2J - K must come back to h_core."""
+    eri = np.zeros((2, 2, 2, 2), dtype=complex)
+    eri[0, 0, 0, 0] = 5.0
+    eri[0, 1, 1, 0] = 1.5  # (01|10), an exchange-type integral
+    eri[1, 0, 0, 1] = 1.5
+    density = np.array([[1.0, 0.0], [0.0, 0.0]], dtype=complex)
+    # Deep enough that orbital 0 stays the lowest Kohn–Sham orbital after 2J−K.
+    h_core = np.diag([-10.0, 0.5]).astype(complex)
+    coulomb = np.einsum("pqrs,rs->pq", eri, density)
+    exchange = np.einsum("prqs,rs->pq", eri, density)
+    h_ks = h_core + (2.0 * coulomb - exchange)
+    recovered = ts.subtract_hartree_fock_mean_field(h_ks, eri, n_occ=1)
+    assert np.allclose(recovered, h_core, atol=1e-10)
+
+
 def test_onsite_U_reproduces_known_hubbard_dimer_spectrum():
     from qiskit_nature.second_q.mappers import JordanWignerMapper
 

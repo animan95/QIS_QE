@@ -116,6 +116,37 @@ def tensors_from_Hk(Hk: np.ndarray, spec: "ham_builder.ModelSpec") -> ActiveSpac
     return ActiveSpaceHamiltonian(h1=h1, eri=eri, core_energy=core_energy)
 
 
+def subtract_hartree_fock_mean_field(
+    h_ks: np.ndarray,
+    eri: np.ndarray,
+    n_occ: int,
+) -> np.ndarray:
+    """Remove the closed-shell Hartree–Fock mean field of `eri` from a Kohn–Sham matrix.
+
+    A Wannier Hamiltonian taken from a DFT calculation already contains Hartree
+    and exchange-correlation. Adding the full `(pq|rs)` on top counts that
+    interaction a second time. This returns
+
+        h_core = H_KS − (2J − K),
+
+    where J and K are built from `eri` (chemist `(pq|rs)`) and the density of
+    the lowest `n_occ` eigenvectors of `H_KS` (one spatial orbital per
+    doubly occupied pair). The many-body Hamiltonian is then `(h_core, eri)`.
+    What remains is the difference between the DFT exchange-correlation
+    potential and exact exchange; this does not screen `eri`.
+    """
+    if n_occ < 0:
+        raise ValueError("n_occ must be non-negative.")
+    herm = 0.5 * (np.asarray(h_ks, dtype=complex) + np.asarray(h_ks, dtype=complex).conj().T)
+    if n_occ > herm.shape[0]:
+        raise ValueError(f"n_occ={n_occ} exceeds the {herm.shape[0]} spatial orbitals.")
+    _evals, evecs = np.linalg.eigh(herm)
+    density = evecs[:, :n_occ] @ evecs[:, :n_occ].conj().T
+    coulomb = np.einsum("pqrs,rs->pq", eri, density, optimize=True)
+    exchange = np.einsum("prqs,rs->pq", eri, density, optimize=True)
+    return herm - (2.0 * coulomb - exchange)
+
+
 def fermionic_from_tensors(t: ActiveSpaceHamiltonian) -> FermionicOp:
     """Build the spinful many-body FermionicOp from (h1, eri) via
     qiskit-nature's own `ElectronicEnergy`, which also guarantees the

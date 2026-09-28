@@ -149,6 +149,50 @@ def eri_from_wannier(
     )
 
 
+def double_factorize_eri(
+    eri: np.ndarray,
+    *,
+    tol: float = 1e-8,
+) -> tuple[np.ndarray, list[np.ndarray]]:
+    """Spectral double factorization of a chemist `(pq|rs)` tensor.
+
+    The Coulomb matrix `V[(p,q),(r,s)] = (pq|rs)` is Hermitian for a real
+    symmetric interaction. Its positive eigenvalues `λ_ℓ` and eigenvectors,
+    reshaped to matrices `L^ℓ`, reconstruct
+
+        (pq|rs) = Σ_ℓ L^ℓ_pq L^ℓ_rs
+
+    with `L^ℓ = sqrt(λ_ℓ) v^ℓ`. Eigenvalues below `tol` are dropped. The
+    returned weights are those `λ_ℓ`. This is the factorization a
+    fault-tolerant double-factorized block encoding starts from; it is not
+    itself a T-count.
+    """
+    eri = np.asarray(eri)
+    n = eri.shape[0]
+    if eri.shape != (n, n, n, n):
+        raise ValueError(f"eri must have shape (n, n, n, n), got {eri.shape}")
+    matrix = eri.reshape(n * n, n * n)
+    matrix = 0.5 * (matrix + matrix.conj().T)
+    evals, vecs = np.linalg.eigh(matrix)
+    weights = []
+    factors = []
+    for value, vector in zip(evals, vecs.T):
+        if float(np.real(value)) <= tol:
+            continue
+        weight = float(np.real(value))
+        weights.append(weight)
+        factors.append(np.sqrt(weight) * vector.reshape(n, n))
+    return np.asarray(weights, dtype=float), factors
+
+
+def reconstruct_eri(factors: list[np.ndarray], n: int) -> np.ndarray:
+    """Inverse of `double_factorize_eri`: Σ_ℓ L^ℓ_pq L^ℓ_rs."""
+    eri = np.zeros((n, n, n, n), dtype=complex)
+    for factor in factors:
+        eri += np.einsum("pq,rs->pqrs", factor, factor, optimize=True)
+    return eri
+
+
 def eri_from_orbitals(
     w: np.ndarray,
     lattice_bohr: np.ndarray,

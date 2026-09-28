@@ -144,14 +144,8 @@ def _ensure_hr(
 
 
 def _mean_field_removal(Hk: np.ndarray, eri: np.ndarray, n_elec: int) -> np.ndarray:
-    """h_core = H_KS - (2J - K), with J and K from eri and the lowest n_elec/2 KS orbitals."""
-    n_occ = n_elec // 2
-    herm = 0.5 * (Hk + Hk.conj().T)
-    _evals, evecs = np.linalg.eigh(herm)
-    density = evecs[:, :n_occ] @ evecs[:, :n_occ].conj().T
-    coul = np.einsum("pqrs,rs->pq", eri, density)
-    exch = np.einsum("prqs,rs->pq", eri, density)
-    return herm - (2.0 * coul - exch)
+    """h_core = H_KS - (2J - K) for the lowest n_elec/2 doubly occupied orbitals."""
+    return tensors.subtract_hartree_fock_mean_field(Hk, eri, n_elec // 2)
 
 
 def _spectrum(hr: Path, n_elec: int):

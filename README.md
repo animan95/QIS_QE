@@ -17,7 +17,7 @@ quantum numbers, and transition density matrices.
 simulators can handle (tens of qubits) limit this to small active spaces —
 a handful of Wannier orbitals around the Fermi level, a defect cluster, a
 molecular fragment, or a CASCI-sized embedded active space — not full unit
-cells of "large materials". See [Limitations](#limitations--known-caveats)
+cells of "large materials". See [Caveats and future plans](#caveats-and-future-plans)
 below. This repo is meant to be a generic solver library: project-specific
 science (e.g. an embedding driver producing the active-space integrals fed
 in here) belongs upstream of it, not inside it.
@@ -71,8 +71,8 @@ benchmarks/     H-chain check and its plot
   periodic (folded supercell) or open (finite cluster) boundary conditions
   per axis. This is the physically correct way to build an interacting
   problem on real Wannier sites — see
-  [Limitations](#limitations--known-caveats) for why building it from a
-  single H(k) instead is usually *not* meaningful.
+  [Caveats and future plans](#caveats-and-future-plans) for why a single
+  H(k) is the wrong object for a primitive-cell interaction.
 - **Tensor-based core** (`tensors.py`): `ActiveSpaceHamiltonian` holds a
   one-body `h1[p,q]`, a fully general two-body `eri[p,q,r,s]` (chemist
   notation, spin-independent — see the module docstring for why one shared
@@ -93,6 +93,14 @@ benchmarks/     H-chain check and its plot
   hr.dat (e.g. an embedding calculation's active space). This is also the
   seam an ab initio Coulomb module plugs into on the Wannier side: it only
   needs to produce an `eri` tensor of the same shape (see `coulomb.py`).
+- **Unscreened Coulomb and a Hartree–Fock double-counting subtraction.**
+  `coulomb.eri_from_orbitals` builds `(pq|rs)` on a real-space grid.
+  `coulomb.double_factorize_eri` factors that tensor (eigenvalues of the
+  reshaped Coulomb matrix); `reconstruct_eri` rebuilds it from the kept
+  factors. `tensors.subtract_hartree_fock_mean_field` removes `2J − K` from
+  a Kohn–Sham one-body matrix before the interaction is added back. The
+  interaction stays unscreened; see
+  [Caveats and future plans](#caveats-and-future-plans).
 - **Excited-state solvers** (`solvers.py`): `diagonalize_active_space` does
   exact diagonalization within a fixed (n_alpha, n_beta) Fock sector,
   returning energies, `⟨S²⟩` per state, and one-body transition density
@@ -103,9 +111,9 @@ benchmarks/     H-chain check and its plot
   matrix). `transition_dipole` is the small classical contraction from `γ⁰ⁿ`
   and one-electron dipole integrals to a transition dipole moment — the
   quantum solver never measures a dipole operator itself. `run_qeom` wraps
-  qiskit-nature's own QEOM for ground/excited-state *energies* (validated
-  against PySCF FCI on H₂/STO-3G); it does not yet expose `⟨S²⟩` or
-  transition density matrices per state — see its docstring.
+  qiskit-nature's own QEOM for ground/excited-state energies and `⟨S²⟩`
+  (validated against PySCF FCI on H₂/STO-3G, including the triplet).
+  Transition density matrices stay on `diagonalize_active_space`.
 - **Second-quantized model builder** (`fermionic_from_Hk` /
   `fermionic_from_cluster`): one-body hopping, onsite Hubbard `U`,
   nearest-neighbor `V` (with duplicate-bond guarding — `(i,j)` and `(j,i)`
@@ -126,7 +134,7 @@ benchmarks/     H-chain check and its plot
   hardware-efficient ansatz, works in any basis) or a number-conserving
   UCCSD ansatz (`ham_builder.qubit_and_uccsd_from_tensors` — rotates (h1, eri)
   to the one-body eigenbasis first, which UCCSD/HartreeFock require; see
-  [Limitations](#limitations--known-caveats) for why that rotation matters).
+  [Caveats and future plans](#caveats-and-future-plans) for why that rotation matters).
 - **FCIDUMP export** (`tensors.write_fcidump`): writes (h1, eri) in the
   standard format read by PySCF/Molpro/block2, giving access to
   exact-diagonalization (FCI) and DMRG reference calculations at sizes
@@ -137,31 +145,66 @@ benchmarks/     H-chain check and its plot
   compares VQE (both approaches above) against exact diagonalization on a
   small Hubbard dimer. See [Validation](#validation) below.
 
-## Roadmap / not yet implemented
+## Caveats and future plans
 
-These appeared in earlier drafts of this README as if shipped; they are not,
-and are listed here instead so the gap is explicit:
+### Caveats
 
-- **Screened (cRPA) U.** `coulomb.eri_from_wannier` evaluates the unscreened
-  `(pq|rs)` tensor from UNK grids and `seedname_u.mat` with a spherical
-  cutoff Coulomb kernel (Spencer–Alavi). It does not yet screen that tensor.
-  `ModelSpec.U`/`V_nn` remain the hand-set model alternative. A full
-  H₂-in-a-box check against PySCF, integrals included, is still the right
-  end-to-end test and has not been run.
-- **EOM-VQE / subspace VQE / Trotter time evolution** — sketched as
-  unexecuted imports in `QE_qiskit.ipynb`, not a working code path.
-- **Execution on real quantum hardware** (IBM/IonQ/Quantinuum) — not
-  connected; everything currently runs on Qiskit's local simulators.
-- **Fault-tolerant resource estimation** (double factorization / tensor
-  hypercontraction of `eri`) — natural once the tensor core is the source of
-  truth, not started.
-- **`⟨S²⟩` and transition density matrices from qEOM specifically** — `
-  run_qeom` returns energies only; qiskit-nature's QEOM computes the needed
-  quantities internally (M/Q/V/W response matrices, expansion coefficients)
-  but doesn't expose them as a public per-state result in the pinned version.
-  `diagonalize_active_space` already provides both and is the recommended
-  solver at the CAS(2,2)-CAS(6,6) scale this module targets — see
-  `solvers.run_qeom`'s docstring.
+- **Hubbard `U` and `V` are model parameters.** They are hand-set couplings
+  on a DFT tight-binding model. The ab initio interaction is the `(pq|rs)`
+  tensor from `coulomb.py`.
+- **Kohn–Sham hoppings already contain a mean-field interaction.** Adding a
+  Hubbard `U` or the full `(pq|rs)` on top counts that piece twice.
+  `ModelSpec.dc_scheme` (`"fll"` or `"amf"`, Anisimov et al., PRB 48, 16929
+  (1993)) shifts a Hubbard `U` and still needs an explicit `dc_n0`. For an
+  ab initio `(pq|rs)`, `tensors.subtract_hartree_fock_mean_field` removes
+  `2J − K` built from the lowest occupied Kohn–Sham orbitals. What remains
+  is the difference between the DFT exchange-correlation potential and exact
+  exchange. The atom-chain script uses that subtraction.
+- **A single H(k) folds every periodic image into one cell.**
+  `fermionic_from_hr` / `fermionic_from_Hk` are the right constructors when
+  that cell is already the interacting region (Γ-point on a large defect
+  supercell). For a primitive-cell hr.dat, or any non-Γ k, use
+  `build_cluster_hamiltonian` + `fermionic_from_cluster`.
+- **UCCSD and Hartree–Fock expect the mean-field eigenbasis.** Wannier
+  orbitals are localized. `qubit_and_uccsd_from_tensors` rotates `(h1, eri)`
+  with `tensors.rotate_to_eigenbasis` first. That rotation is a unitary
+  single-particle basis change, so the spectrum is unchanged
+  (`tests/test_tensors.py`). Calling `build_uccsd_ansatz` on the Wannier
+  Hamiltonian directly can land about `0.3|t|` above the true ground state;
+  that is what the H-chain benchmark hit before the rotation was added.
+- **The Coulomb tensor is the bare interaction.** `coulomb.eri_from_wannier`
+  integrates `(pq|rs)` from UNK grids and `seedname_u.mat` with a spherical
+  cutoff (Spencer–Alavi). Electrons outside the active space do not screen
+  it, so `U` for correlated d/f orbitals is an upper bound. On H₂/STO-3G the
+  same kernel matches PySCF to about 2% on a 36³ grid
+  (`tests/test_coulomb.py`). The lithium orbital in the atom-chain example
+  is the smooth ultrasoft function; the augmentation charge is omitted.
+- **qEOM transition density matrices are not assembled.** `run_qeom`
+  returns energies and `⟨S²⟩` (`result.total_angular_momentum`). qiskit-nature
+  leaves auxiliary expectations at 0 unless `aux_eval_rules` is set; this
+  call uses `EvaluationRule.DIAG`. The one-body transition density matrices
+  `γ⁰ⁿ` still come from `diagonalize_active_space`.
+- **The T count is a logical Pauli-LCU cost.** `ftqc.py` counts data qubits,
+  one LCU register, one phase ancilla, and T gates for a binary SELECT plus
+  synthesized PREPARE rotations. It does not schedule surface-code distance
+  or magic-state factories. `coulomb.double_factorize_eri` factors the
+  chemist tensor; the T count does not use those factors yet.
+
+### Future plans
+
+- **cRPA (or similar) screening** of the `(pq|rs)` tensor from
+  `coulomb.eri_from_wannier`.
+- **A T count from the factorized tensor.** Double factorization is in
+  `coulomb.double_factorize_eri` and reconstructs a positive-semidefinite
+  `eri` in tests. The qubitization cost in `ftqc.py` is still the Pauli
+  sum. Tensor hypercontraction is not in the library.
+- **EOM-VQE, subspace VQE, and Trotter time evolution.** These appear as
+  unexecuted imports in `QE_qiskit.ipynb`.
+- **Runs on IBM, IonQ, or Quantinuum hardware.** Current jobs use Qiskit's
+  local simulators.
+- **Transition density matrices from qEOM.** `⟨S²⟩` is evaluated with
+  `EvaluationRule.DIAG`. The off-diagonal one-body matrices `γ⁰ⁿ` are still
+  the `diagonalize_active_space` result.
 
 ## Validation
 
@@ -191,57 +234,13 @@ correctly flagging the CAS(2,2) triplet, `⟨S²⟩=2`, interleaved among the
 singlets), its transition density matrix matches PySCF's `trans_rdm1` up to
 the expected transpose convention and an arbitrary eigenvector phase, and
 `run_qeom`'s energies match PySCF's FCI to ~2e-4 Hartree with a classical
-VQE.
+VQE, and its `⟨S²⟩` matches the same roots (the CAS(2,2) triplet is 2).
 
 Both `test_tensors.py`'s and `test_solvers.py`'s PySCF cross-checks need
 `pip install -e ".[dev,validate]"`; they're skipped otherwise, and everything
 else works without PySCF installed.
 
 Run the benchmark yourself: `python benchmarks/h_chain_benchmark.py`.
-
-## Limitations & known caveats
-
-- **U/V are model parameters, not ab initio values.** They are hand-set
-  Hubbard-like couplings on top of a DFT-derived tight-binding model, i.e.
-  "Wannier tight-binding + model interaction," not a first-principles
-  interacting Hamiltonian. See the Roadmap above for what closing this gap
-  requires.
-- **No double-counting correction is applied by default.** The DFT hoppings
-  already contain a mean-field estimate of the interaction (via Hartree +
-  exchange-correlation), so adding `U` on top without correcting for that
-  double-counts part of it. `ModelSpec.dc_scheme` implements the two standard
-  corrections (FLL, AMF; Anisimov et al., PRB 48, 16929 (1993)) — pick one and
-  supply `dc_n0` (the nominal DFT occupation per spin-orbital) explicitly;
-  there is no safe default to fall back on silently. FLL uses the orbital's
-  *total* occupation N=2·n0 (U multiplies n↑n↓ for the whole orbital); AMF
-  uses n0 directly. The two agree at half filling (n0=1/2): both give U/2,
-  which is also the exact particle-hole-symmetric point of the single-band
-  Hubbard model — a useful sanity check if you're changing this code.
-- **Building the many-body problem from a single H(k) is usually not
-  meaningful.** `fermionic_from_hr`/`fermionic_from_Hk` fold every periodic
-  image's hopping into one cell's orbitals; adding a local `U` there is only
-  physically sensible if that "cell" already *is* the full interacting region
-  you intend (e.g. Γ-point on a hr.dat that already describes a large defect
-  supercell). For a primitive-cell hr.dat, or any non-Γ k, use
-  `build_cluster_hamiltonian` + `fermionic_from_cluster` instead — it builds
-  an explicit real-space cluster with boundary conditions you choose.
-- **UCCSD/HartreeFock assume the input orbitals are already the mean-field
-  eigenbasis.** Wannier orbitals are a localized basis, not that eigenbasis;
-  calling `ham_builder.build_uccsd_ansatz` directly on a Wannier Hamiltonian
-  (rather than through `qubit_and_uccsd_from_tensors`) can converge to the
-  wrong state — this was hit and diagnosed while building the benchmark
-  above (VQE stuck ~0.3|t| above the true ground state). Use
-  `qubit_and_uccsd_from_tensors`, which rotates (h1, eri) to the one-body
-  eigenbasis first via `tensors.rotate_to_eigenbasis`; that rotation is a
-  unitary single-particle basis change, so it doesn't alter the physical
-  spectrum (verified in `tests/test_tensors.py`), only which determinant
-  counts as the mean-field reference.
-- **Unscreened, even once implemented, is not "correct."** A direct Coulomb
-  integral over Wannier functions ignores screening from the rest of the
-  electrons, typically overestimating `U` by a factor of a few for
-  correlated d/f-like orbitals. Treat it as an upper bound / starting point,
-  not a final answer, until a cRPA (or similar) screening calculation is
-  wired up.
 
 ## Installation
 

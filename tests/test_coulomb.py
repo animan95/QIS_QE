@@ -4,6 +4,7 @@ import struct
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 import coulomb
 
@@ -32,6 +33,18 @@ def _analytic_ssss(alpha: float) -> float:
     return float(np.sqrt(2.0 * beta / np.pi))
 
 
+def test_double_factorization_reconstructs_the_tensor():
+    rng = np.random.default_rng(0)
+    # A sum of squares is positive semidefinite as a Coulomb matrix, which is
+    # the case the factorization keeps.
+    pieces = [rng.normal(size=(3, 3)) for _ in range(2)]
+    eri = sum(np.einsum("pq,rs->pqrs", piece, piece) for piece in pieces)
+    weights, factors = coulomb.double_factorize_eri(eri, tol=1e-10)
+    rebuilt = coulomb.reconstruct_eri(factors, 3)
+    assert weights.size == 2
+    assert np.allclose(rebuilt, eri, atol=1e-8)
+
+
 def test_gaussian_self_repulsion_matches_analytic():
     alpha = 1.5
     w, lattice = _gaussian_orbital(n=48, L=16.0, alpha=alpha)
@@ -57,6 +70,33 @@ def test_two_orbital_tensor_has_chemist_symmetry():
     assert np.allclose(eri, np.transpose(eri, (2, 3, 0, 1)), atol=1e-8)
     assert eri[0, 0, 0, 0] > 0.0
     assert eri[0, 1, 1, 0] > 0.0  # exchange (01|10)
+
+
+def test_h2_sto3g_fft_matches_pyscf_integrals():
+    """The cutoff FFT Coulomb tensor on H2/STO-3G MOs matches PySCF's integrals."""
+    pyscf = pytest.importorskip("pyscf")
+    from pyscf import gto, scf
+    from pyscf.dft.numint import eval_ao
+
+    bond = 1.4
+    mol = gto.M(
+        atom=f"H 0 0 {-bond / 2}; H 0 0 {bond / 2}",
+        basis="sto-3g",
+        unit="Bohr",
+        verbose=0,
+    )
+    coeff = scf.RHF(mol).run(verbose=0).mo_coeff
+    n, length = 36, 18.0
+    axes = (np.arange(n) + 0.5) / n * length - length / 2
+    x, y, z = np.meshgrid(axes, axes, axes, indexing="ij")
+    coords = np.stack([x, y, z], axis=-1).reshape(-1, 3)
+    mos = eval_ao(mol, coords) @ coeff
+    orbitals = mos.T.reshape(coeff.shape[1], n, n, n).astype(np.complex128)
+    lattice = np.eye(3) * length
+    fft_eri = coulomb.eri_from_orbitals(orbitals, lattice, kernel="cutoff", rc=length / 2)
+    ao_eri = mol.intor("int2e")
+    mo_eri = np.einsum("pi,qj,rk,sl,pqrs->ijkl", coeff, coeff, coeff, coeff, ao_eri)
+    assert np.allclose(fft_eri.real, mo_eri, rtol=2e-2, atol=2e-3)
 
 
 def test_periodic_kernel_drops_g0():

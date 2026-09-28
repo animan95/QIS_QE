@@ -13,7 +13,8 @@ PySCF on a real H2 active space). Everything downstream of gamma^{0n}
 one-electron integrals and does not need the quantum solver.
 
 `run_qeom` wraps qiskit-nature's own QEOM for the ground + excited-state
-*energies* only -- see its docstring for what it does not (yet) provide.
+energies and `<S^2>`. Transition density matrices stay on
+`diagonalize_active_space`.
 For the active-space sizes this is aimed at (CAS(2,2)-CAS(6,6)-ish embedded
 fragments), `diagonalize_active_space` is the recommended solver: it is exact
 (no ansatz-expressibility question), and it already returns everything a
@@ -192,22 +193,24 @@ def run_qeom(
     energies matched PySCF's FCI eigenvalues to ~1e-4 Hartree with a
     classical (statevector) VQE.
 
-    NOT YET PROVIDED (unlike `diagonalize_active_space`): <S^2> per excited
-    state and transition density matrices. qiskit-nature's QEOM computes
-    these internally as part of its M/Q/V/W response matrices but does not
-    expose them as a public per-state result in this version -- extracting
-    them (from `result.raw_result.expansion_coefficients` contracted with the
-    same excitation operators) is a documented next step, not implemented
-    here. Until then, prefer `diagonalize_active_space` for anything that
-    needs spin filtering or transition density matrices -- which, at the
-    CAS(2,2)-CAS(6,6) active-space sizes this module targets, has no
-    accuracy or speed disadvantage over QEOM (both operate on the same
-    small qubit count; QEOM's advantage is for problems too large to
-    exactly diagonalize, which does not describe this regime).
+    `<S^2>` is `result.total_angular_momentum`, in the same order as
+    `result.eigenvalues`. qiskit-nature's QEOM default
+    (`aux_eval_rules=None`) records 0 for every auxiliary expectation
+    without measuring it; this function passes `EvaluationRule.DIAG` so
+    `AngularMomentum` is actually evaluated on each state. Transition
+    density matrices are still not part of this result — use
+    `diagonalize_active_space` when those are needed. At the
+    CAS(2,2)–CAS(6,6) sizes this module targets, exact diagonalization
+    has no accuracy or speed disadvantage over qEOM.
     """
     from qiskit_nature.second_q.hamiltonians import ElectronicEnergy
     from qiskit_nature.second_q.problems import ElectronicStructureProblem
-    from qiskit_nature.second_q.algorithms import GroundStateEigensolver, QEOM
+    from qiskit_nature.second_q.properties import AngularMomentum
+    from qiskit_nature.second_q.algorithms import (
+        GroundStateEigensolver,
+        QEOM,
+        EvaluationRule,
+    )
     from qiskit_nature.second_q.circuit.library import UCCSD, HartreeFock
     from qiskit_algorithms.minimum_eigensolvers import VQE
     from qiskit_algorithms.optimizers import SLSQP
@@ -220,11 +223,12 @@ def run_qeom(
     problem = ElectronicStructureProblem(ee)
     problem.num_particles = tuple(num_particles)
     problem.num_spatial_orbitals = nw
+    problem.properties.add(AngularMomentum(nw))
 
     hf = HartreeFock(nw, num_particles, mapper)
     ansatz = UCCSD(nw, num_particles, mapper, initial_state=hf)
     vqe = VQE(Estimator(), ansatz, SLSQP())
     vqe.initial_point = np.zeros(ansatz.num_parameters)
     gse = GroundStateEigensolver(mapper, vqe)
-    qeom = QEOM(gse, Estimator(), excitations)
+    qeom = QEOM(gse, Estimator(), excitations, aux_eval_rules=EvaluationRule.DIAG)
     return qeom.solve(problem)
