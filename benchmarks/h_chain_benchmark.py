@@ -39,7 +39,7 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import ham_builder as hb
 import tensors as ts
 

@@ -1,0 +1,12 @@
+4-site open Hubbard chain, one Wannier orbital per site.
+t = -1.0 eV, U = 4.0 eV, half filling (n_up, n_down) = (2, 2).
+Defect: onsite energy of site 2 shifted by 1.5 eV.
+Excitation energies are same-sector singlets, omega = E_n - E_0.
+pristine E0 = -1.953145 eV
+defect   E0 = -0.542387 eV
+n  omega_pristine_eV  omega_defect_eV
+0  0.000000  0.000000
+1  1.357736  1.365530
+2  3.328203  2.973680
+3  3.864153  3.654905
+4  4.519481  4.435257

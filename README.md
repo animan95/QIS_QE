@@ -40,14 +40,24 @@ flowchart LR
     E --> I["solvers.py: exact diagonalization / qEOM\n-> energies, <S^2>, transition DMs"]
 ```
 
+## Layout
+
+```
+src/            library (ham_builder, tensors, solvers, coulomb, ftqc, wannierize_qepy, embed_qiskit)
+tests/          pytest, plus the defect-cluster and atom-chain figures explained below
+benchmarks/     H-chain check and its plot
+```
+
+`pip install -e .` puts `src/` on the import path. Without installing, set `PYTHONPATH=src`.
+
 ## What's implemented
 
-- **QEpy-driven SCF/NSCF → Wannier90 pipeline** (`wannierize_qepy.py`): writes
+- **QEpy-driven SCF/NSCF → Wannier90 pipeline** (`src/wannierize_qepy.py`): writes
   the `.win` file from the QEpy driver's lattice/k-points, runs
   `wannier90.x -pp` → `pw2wannier90.x` → `wannier90.x`, and returns
   `seedname_hr.dat`. Requires QE, Wannier90, and QEpy installed and on
-  `PATH` (see [Installation](#installation)) — this part has not been run
-  end-to-end against a shipped example in this repo yet.
+  `PATH` (see [Installation](#installation)). The atom-chain section below
+  is a shipped example of that path; the QE work directory is not committed.
 - **hr.dat parsing** (`ham_builder.read_wannier90_hr`) with strict validation:
   a mismatch between the number of R-vectors and Wigner-Seitz degeneracy
   weights raises instead of silently dropping the weights.
@@ -104,6 +114,14 @@ flowchart LR
   (`ModelSpec.dc_scheme="fll"` or `"amf"`, see `double_counting_shift`).
 - **Qubit mapping**: Jordan–Wigner, parity (with a correctly wired two-qubit
   reduction via `num_particles`), or Bravyi–Kitaev.
+- **Fault-tolerant phase estimation** (`src/ftqc.py`): qubitization of the
+  Jordan–Wigner Pauli sum. `walk_eigenphases` builds the walk explicitly for
+  a small active space and its phases are `arccos(E/λ)`, with `λ` the LCU
+  1-norm. `cost_active_space` turns a target energy error into logical
+  qubits, walk queries `⌈π λ / ε⌉`, and a T count for a binary SELECT plus
+  synthesized PREPARE rotations. This is a logical-level cost, not a
+  surface-code factory schedule. The variational path below is the NISQ
+  alternative on the same Hamiltonian.
 - **VQE**, via either a particle-number penalty (`penalize_number` +
   hardware-efficient ansatz, works in any basis) or a number-conserving
   UCCSD ansatz (`ham_builder.qubit_and_uccsd_from_tensors` — rotates (h1, eri)
@@ -124,17 +142,12 @@ flowchart LR
 These appeared in earlier drafts of this README as if shipped; they are not,
 and are listed here instead so the gap is explicit:
 
-- **Ab initio Coulomb integrals** over the Wannier functions (`coulomb.py` is
-  a scaffold with a documented `NotImplementedError` — it needs UNK real-space
-  grids and the Wannier90 U-matrix, neither of which is parsed yet, plus care
-  with the periodic G=0 Coulomb-kernel divergence). Until this exists,
-  `ModelSpec.U`/`V_nn` are hand-set model parameters, not DFT output — see
-  [Limitations](#limitations--known-caveats). Once implemented, the
-  recommended validation is an isolated H₂-in-a-box run through the full
-  pipeline (QE → Wannier90 → `coulomb.eri_from_wannier` → FCI, via
-  `tensors.write_fcidump`) compared against a direct PySCF calculation on the
-  same molecule — a true end-to-end check, integrals included.
-- **Constrained RPA (cRPA)** for a screened U, built on top of the above.
+- **Screened (cRPA) U.** `coulomb.eri_from_wannier` evaluates the unscreened
+  `(pq|rs)` tensor from UNK grids and `seedname_u.mat` with a spherical
+  cutoff Coulomb kernel (Spencer–Alavi). It does not yet screen that tensor.
+  `ModelSpec.U`/`V_nn` remain the hand-set model alternative. A full
+  H₂-in-a-box check against PySCF, integrals included, is still the right
+  end-to-end test and has not been run.
 - **EOM-VQE / subspace VQE / Trotter time evolution** — sketched as
   unexecuted imports in `QE_qiskit.ipynb`, not a working code path.
 - **Execution on real quantum hardware** (IBM/IonQ/Quantinuum) — not
@@ -242,7 +255,7 @@ changed the `Estimator` primitive interface in a way that breaks
 `qiskit-algorithms<0.4`'s `VQE`) — see `requirements.txt` for the exact
 constraint if you need to move off it.
 
-The Wannierization step (`wannierize_qepy.py`) additionally requires, on
+The Wannierization step (`src/wannierize_qepy.py`) additionally requires, on
 `PATH` and installed separately (not on PyPI):
 - [Quantum ESPRESSO](https://www.quantum-espresso.org/) (`pw.x`,
   `pw2wannier90.x`) and [QEpy](https://gitlab.com/QEF/qepy) bindings
@@ -262,6 +275,50 @@ To also run the PySCF cross-check of the tensor core / FCIDUMP export
 ```bash
 pip install -e ".[dev,validate]"
 pytest
+```
+
+## Defect cluster: excitations with and without a defect
+
+`tests/defect_cluster.py` builds a 4-site open chain from a nearest-neighbor tight-binding model (`t = -1` eV) plus a uniform Hubbard `U = 4` eV, using `build_cluster_hamiltonian` and `tensors_from_Hk`. The defect is the same cluster with the onsite energy of site 2 raised by 1.5 eV. Both Hamiltonians are exact-diagonalized in the half-filled sector `(n_up, n_down) = (2, 2)`, singlets are kept with `filter_singlets`, and the excitation energy is `E_n - E_0` inside that sector. The particle number does not change, so these are same-filling excitations (spin and local rearrangements), not charged excitations into a different electron count.
+
+The left panel is the one-body onsite energy. The right panel is the singlet spectrum. The defect raises the ground-state energy and moves the excitation energies relative to the pristine chain. Numbers are in `tests/results/defect_cluster_summary.txt`.
+
+![Singlet excitation energies of a 4-site Hubbard chain with and without an onsite defect](tests/results/defect_cluster_excitations.png)
+
+Regenerate the figure from the repository root:
+
+```bash
+PYTHONPATH=src python tests/defect_cluster.py
+```
+
+## Atom chains: H–H–H–H and H–Li–H–H
+
+`tests/atom_chain.py` is the same comparison with real atoms. Both chains sit in a 14 × 10 × 10 Å box at the Γ point, with the four sites 1.6 Å apart. Quantum ESPRESSO (PBE) and Wannier90 produce four s-like Wannier functions. The pure chain is four hydrogens (`H_ONCV_PBE-1.2`, one valence electron each). The other chain replaces the second site with lithium (`li_pbe_v1.4`, ultrasoft, three valence electrons including the 1s semicore), so that chain has six valence electrons rather than four.
+
+The Coulomb tensor is the unscreened `(pq|rs)` from the Wannier functions on the UNK grid, with a spherical cutoff. The lithium orbital is the smooth ultrasoft function; the augmentation charge is not included. The one-body matrix is the Wannier Kohn–Sham Hamiltonian with the Hartree–Fock mean field of that same `(pq|rs)` removed, so the interaction is not added on top of the piece already inside the Kohn–Sham matrix. Each spectrum is `E_n − E_0` at that chain's own electron count, keeping states with the same `<S²>` as the ground state.
+
+1.6 Å is longer than a covalent H–H bond, so the hydrogen chain's ground state is a triplet and its first two excitations sit near 0.05 eV and 0.10 eV. Putting Li on the second site drops that Wannier onsite by about 45 eV (the semicore) and opens the first excitations to about 3.9 eV and 4.7 eV. The excitations near 47 eV on the lithium chain promote that semicore orbital. Numbers are in `tests/results/atom_chain_summary.txt`.
+
+![Kohn–Sham onsites and triplet excitations of an H4 chain and the same chain with one H replaced by Li](tests/results/atom_chain_excitations.png)
+
+Regenerate the figure from the repository root. This step runs Quantum ESPRESSO and Wannier90; the pytest suite does not.
+
+```bash
+PYTHONPATH=src python tests/atom_chain.py
+```
+
+## Fault-tolerant cost on Hubbard chains
+
+`tests/ftqc_demo.py` runs qubitized phase estimation on three open Hubbard chains (`t = -1`, `U = 4`). They use the same active-space object as the exact-diagonalization and UCCSD paths. The 2-site chain has 4 data qubits and 11 Pauli terms, so the walk matrix fits in memory: every eigenphase matches `arccos(E/λ)` to roundoff, with `λ = 10`. The 4- and 6-site chains are the same model with 8 and 12 data qubits. Their walks are not built explicitly; the figure reports the logical T count for a relative energy error `ε/λ`.
+
+At `ε = 0.01 λ` the three chains need 9, 14, and 19 logical qubits and about `2.2×10⁵`, `6.0×10⁵`, and `1.0×10⁶` T gates. Numbers are in `tests/results/ftqc_hubbard_summary.txt`.
+
+![Qubitization walk phases for a 2-site Hubbard dimer and T counts for 2-, 4-, and 6-site chains](tests/results/ftqc_hubbard.png)
+
+Regenerate the figure from the repository root. No Quantum ESPRESSO run is required.
+
+```bash
+PYTHONPATH=src python tests/ftqc_demo.py
 ```
 
 ## License

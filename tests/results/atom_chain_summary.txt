@@ -1,0 +1,22 @@
+Linear chains in a 14 x 10 x 10 Å box, Γ only, atoms 1.6 Å apart.
+Pseudopotentials: H_ONCV_PBE-1.2 (norm-conserving, 1 valence electron)
+and li_pbe_v1.4 (ultrasoft, 3 valence electrons, semicore 1s).
+H4: 4 valence electrons in sector (2, 2). LiH3: 6 electrons in sector (3, 3).
+Active space: 4 s-like Wannier functions. H4 uses its 4 Kohn–Sham bands.
+LiH3 disentangles 4 functions out of 8 bands, freezing the lowest 4.
+Interaction: unscreened (pq|rs) from the UNK grids. The Li function is
+the smooth ultrasoft orbital (no augmentation charge). One-body: the
+Wannier KS matrix with the Hartree–Fock mean field of that (pq|rs) removed.
+1.6 Å is longer than a covalent H–H bond, so the H4 ground state is a triplet.
+H4   E0 = -90.874088 eV   ground triplet (<S^2>=2.000)
+LiH3 E0 = -205.141360 eV   ground triplet (<S^2>=2.000)
+Onsite energies below are ordered by Wannier centre along the chain.
+onsite_H4_eV    -5.6577 -5.7514 -5.7537 -5.6628
+onsite_LiH3_eV  -5.2647 -50.4399 -7.1671 -6.4156
+n  omega_H4_eV  omega_LiH3_eV
+0  0.000000  0.000000
+1  0.050569  3.869004
+2  0.104300  4.658253
+3  7.141692  46.628813
+4  7.715896  46.630794
+5  8.341841  51.505377

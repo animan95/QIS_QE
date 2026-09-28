@@ -1,0 +1,8 @@
+Open Hubbard chains, t = -1, U = 4, Jordan–Wigner, qubitized phase estimation.
+ε = η λ with η the relative error. Walk phases are checked only for 2 sites
+(4 data qubits + 4 LCU ancillas). Longer chains are cost-only.
+2-site max |walk phase - arccos(E/λ)| = 8.882e-16
+sites  data  pauli  lambda  logical  T(η=0.1)  T(η=0.01)  T(η=0.001)
+    2     4     11   10.00        9     16448     224910     2871788
+    4     8     25   22.00       14     45568     599760     7490528
+    6    12     39   34.00       19     81536    1042020    12781656

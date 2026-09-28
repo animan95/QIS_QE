@@ -23,5 +23,17 @@ dev = ["pytest>=7.0"]
 # tests/test_tensors.py and tests/test_solvers.py cross-check against.
 validate = ["pyscf>=2.3"]
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = [
+    "coulomb",
+    "embed_qiskit",
+    "ftqc",
+    "ham_builder",
+    "solvers",
+    "tensors",
+    "wannierize_qepy",
+]
+
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = ["src"]
