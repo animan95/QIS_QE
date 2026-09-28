@@ -84,9 +84,13 @@ def test_self_pair_rejected():
 
 
 def test_double_counting_shift_fll_and_amf():
-    assert hb.double_counting_shift(U=4.0, n0=1.0, scheme="fll") == pytest.approx(2.0)
-    assert hb.double_counting_shift(U=4.0, n0=0.5, scheme="fll") == pytest.approx(0.0)
+    # Half filling (n0=1/2, i.e. total orbital occupation N=1) is the
+    # particle-hole-symmetric point of the single-band Hubbard model and
+    # FLL/AMF must agree there: both give U/2.
+    assert hb.double_counting_shift(U=4.0, n0=0.5, scheme="fll") == pytest.approx(2.0)
     assert hb.double_counting_shift(U=4.0, n0=0.5, scheme="amf") == pytest.approx(2.0)
+    # FLL uses the TOTAL orbital occupation N=2*n0, not n0 itself.
+    assert hb.double_counting_shift(U=4.0, n0=1.0, scheme="fll") == pytest.approx(6.0)
     with pytest.raises(ValueError):
         hb.double_counting_shift(U=4.0, n0=0.5, scheme="bogus")
 

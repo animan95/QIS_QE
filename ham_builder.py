@@ -312,18 +312,26 @@ def double_counting_shift(U: float, n0: float, scheme: Literal["fll", "amf"]) ->
     documented choices (Anisimov et al., "Density-functional theory and NiO
     photoemission spectra", PRB 48, 16929 (1993)):
 
-    - "fll" (fully localized limit): V_dc = U * (n0 - 1/2). Appropriate when
-      the orbital is expected to be well-localized/atomic-like at the DFT
-      level (typical for correlated d/f shells).
+    - "fll" (fully localized limit): V_dc = U * (N - 1/2), where N = 2*n0 is
+      the TOTAL occupation of the orbital (both spins) -- U in this model
+      multiplies n_up*n_down for the whole orbital, so the FLL correction
+      must be built from the whole-orbital occupation, not the per-spin one.
+      Appropriate when the orbital is expected to be well-localized/atomic-
+      like at the DFT level (typical for correlated d/f shells).
     - "amf" (around mean field): V_dc = U * n0. Appropriate closer to the
       weakly-correlated/itinerant limit.
+
+    Both schemes agree at half filling (n0 = 1/2, N = 1): V_dc = U/2, which is
+    also the exact particle-hole-symmetric point of the single-band Hubbard
+    model -- a useful sanity check.
 
     n0 is the nominal DFT occupation per spin-orbital of the correlated
     manifold (e.g. electrons-in-window / (2*num_wann) at the relevant filling)
     -- it must be supplied by the caller, not guessed.
     """
     if scheme == "fll":
-        return U * (n0 - 0.5)
+        n_total = 2.0 * n0
+        return U * (n_total - 0.5)
     if scheme == "amf":
         return U * n0
     raise ValueError(f"Unknown double-counting scheme: {scheme}")
@@ -333,80 +341,45 @@ def fermionic_from_Hk(Hk: np.ndarray, spec: ModelSpec) -> FermionicOp:
     """Create a second-quantized Hamiltonian from a single-particle matrix
     (either a k-space H(k), or the H array of a ClusterHamiltonian) and a
     model spec.
+
+    Internally this builds one-body/two-body tensors (`tensors.
+    tensors_from_Hk`) and hands them to `tensors.fermionic_from_tensors`,
+    rather than assembling FermionicOp strings by hand -- the tensor form is
+    what `build_uccsd_ansatz`'s eigenbasis rotation, `tensors.write_fcidump`,
+    and a future ab initio Coulomb module all need, so it is the source of
+    truth; this function (and `fermionic_from_cluster`) are thin, backward-
+    compatible wrappers around it. See `tensors.py`.
     """
+    import tensors as _tensors  # local import: tensors.py imports back from here
+
     nw = Hk.shape[0]
-    nso = nw * (2 if spec.spinful else 1)
 
-    def orb(i: int, spin: int) -> int:
-        # Block spin-orbital ordering (all alpha, then all beta): this is the
-        # convention qiskit-nature's HartreeFock/UCCSD assume, and mismatching
-        # it silently produces a self-consistent-looking but physically wrong
-        # ansatz (right qubit count, wrong excitations).
-        return i + spin * nw if spec.spinful else i
-
-    terms: Dict[str, complex] = {}
-
-    # One-body hopping for each spin channel
-    for m in range(nw):
-        for n in range(nw):
-            t = complex(Hk[m, n]) * spec.unit_scale
-            if abs(t) < 1e-14:
-                continue
-            if spec.spinful:
-                for s in (0, 1):
-                    p = orb(m, s); q = orb(n, s)
-                    key = f"+_{p} -_{q}"
-                    terms[key] = terms.get(key, 0.0) + t
-            else:
-                p = orb(m, 0); q = orb(n, 0)
-                key = f"+_{p} -_{q}"
-                terms[key] = terms.get(key, 0.0) + t
-
-    # Onsite U
-    if spec.spinful and spec.U != 0.0:
-        for i in range(nw):
-            up, dn = orb(i, 0), orb(i, 1)
-            key = f"+_{up} -_{up} +_{dn} -_{dn}"
-            terms[key] = terms.get(key, 0.0) + spec.U * spec.unit_scale
-
-    # Double-counting correction: -V_dc * n_p for every spin-orbital
-    if spec.dc_scheme is not None:
-        if spec.U == 0.0 or spec.dc_n0 is None:
-            raise ValueError(
-                "dc_scheme requires both U != 0 and dc_n0 (nominal occupation "
-                "per spin-orbital) to be set."
-            )
-        v_dc = double_counting_shift(spec.U, spec.dc_n0, spec.dc_scheme) * spec.unit_scale
-        for p in range(nso):
-            key = f"+_{p} -_{p}"
-            terms[key] = terms.get(key, 0.0) - v_dc
-
-    # Nearest-neighbor density-density V_nn
-    if spec.V_nn != 0.0 and spec.nn_pairs:
-        pairs = _dedupe_nn_pairs(spec.nn_pairs)
-        for (i, j) in pairs:
-            if spec.spinful:
-                for si in (0, 1):
-                    for sj in (0, 1):
-                        pi, pj = orb(i, si), orb(j, sj)
-                        key = f"+_{pi} -_{pi} +_{pj} -_{pj}"
-                        terms[key] = terms.get(key, 0.0) + spec.V_nn * spec.unit_scale
-            else:
-                pi, pj = orb(i, 0), orb(j, 0)
-                key = f"+_{pi} -_{pi} +_{pj} -_{pj}"
+    if not spec.spinful:
+        # Two-body terms (U, double counting, V_nn) all require both spin
+        # channels; the spinless case is one-body-only and simple enough to
+        # keep as a direct string construction.
+        if spec.U != 0.0 or spec.dc_scheme is not None:
+            raise ValueError("ModelSpec.U/dc_scheme require spinful=True.")
+        terms: Dict[str, complex] = {}
+        for m in range(nw):
+            for n in range(nw):
+                t = complex(Hk[m, n]) * spec.unit_scale
+                if abs(t) < 1e-14:
+                    continue
+                terms[f"+_{m} -_{n}"] = terms.get(f"+_{m} -_{n}", 0.0) + t
+        if spec.V_nn != 0.0 and spec.nn_pairs:
+            for (i, j) in _dedupe_nn_pairs(spec.nn_pairs):
+                key = f"+_{i} -_{i} +_{j} -_{j}"
                 terms[key] = terms.get(key, 0.0) + spec.V_nn * spec.unit_scale
+        if spec.mu != 0.0:
+            for p in range(nw):
+                terms[f"+_{p} -_{p}"] = terms.get(f"+_{p} -_{p}", 0.0) - spec.mu * spec.unit_scale
+        if abs(spec.energy_shift) > 0.0:
+            terms[""] = terms.get("", 0.0) + spec.energy_shift * spec.unit_scale
+        return FermionicOp(terms, num_spin_orbitals=nw, copy=False)
 
-    # Chemical potential: -mu * N_hat
-    if spec.mu != 0.0:
-        for p in range(nso):
-            key = f"+_{p} -_{p}"
-            terms[key] = terms.get(key, 0.0) - spec.mu * spec.unit_scale
-
-    # Constant energy shift: E0 * I
-    if abs(spec.energy_shift) > 0.0:
-        terms[""] = terms.get("", 0.0) + spec.energy_shift * spec.unit_scale  # empty label -> identity
-
-    return FermionicOp(terms, num_spin_orbitals=nso, copy=False)
+    tensors_ = _tensors.tensors_from_Hk(Hk, spec)
+    return _tensors.fermionic_from_tensors(tensors_)
 
 
 def fermionic_from_cluster(cluster: ClusterHamiltonian, spec: ModelSpec) -> FermionicOp:
@@ -493,17 +466,43 @@ def build_uccsd_ansatz(nso: int, num_particles: Tuple[int, int], mapper):
     directly on a Hamiltonian built from H(k) or a cluster in the raw Wannier
     basis can converge to the wrong state (verified: for a 2-site Hubbard
     dimer in the site basis, VQE with this ansatz got stuck ~0.3|t| above the
-    true ground state from many random restarts). To use this correctly on a
-    Wannier Hamiltonian, first diagonalize the one-body part and rotate the
-    interaction into that eigenbasis; until that rotation is implemented here,
-    prefer `number_penalty_op`/`penalize_number` with a hardware-efficient
-    ansatz for Wannier-basis problems (see benchmarks/h_chain_benchmark.py).
+    true ground state from many random restarts). Use
+    `qubit_and_uccsd_from_tensors` instead, which does the required
+    eigenbasis rotation first (verified: it brings the same dimer to within
+    1e-8|t| of exact, from the zero initial point) -- this function is kept
+    for callers who already have a Hamiltonian in the correct basis.
     """
     from qiskit_nature.second_q.circuit.library import UCCSD, HartreeFock
 
     num_spatial_orbitals = nso // 2
     hf = HartreeFock(num_spatial_orbitals, num_particles, mapper)
     return UCCSD(num_spatial_orbitals, num_particles, mapper, initial_state=hf)
+
+
+def qubit_and_uccsd_from_tensors(
+    t: "tensors.InteractionTensors",
+    num_particles: Tuple[int, int],
+    *,
+    mapper: str = "jw",
+) -> Tuple[SparsePauliOp, "object", np.ndarray]:
+    """Rotate (h1, eri) to the one-body eigenbasis, then build both the qubit
+    Hamiltonian and a UCCSD ansatz that is actually variationally meaningful
+    for it -- HartreeFock/UCCSD need the mean-field eigenbasis (see
+    `build_uccsd_ansatz`'s caveat), which a raw Wannier/site basis is not, but
+    the rotated basis is by construction.
+
+    Returns (qubit_op, ansatz, C) where C's columns are the site-basis ->
+    eigenbasis coefficients (`tensors.rotate_to_eigenbasis`), kept in case the
+    caller needs to rotate a measured/optimized state back to the site basis.
+    """
+    import tensors as _tensors
+
+    t_rot, C = _tensors.rotate_to_eigenbasis(t)
+    fop = _tensors.fermionic_from_tensors(t_rot)
+    m = _get_mapper(mapper)
+    qop = m.map(fop)
+    ansatz = build_uccsd_ansatz(fop.num_spin_orbitals, num_particles, m)
+    return qop, ansatz, C
 
 
 def to_qubit_op(

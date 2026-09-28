@@ -16,6 +16,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+# PySCF is not required to use this package -- it's an independent classical
+# reference (FCI on tensors.write_fcidump output) used to cross-check the
+# tensor core in tests/test_tensors.py::test_write_fcidump_matches_pyscf_fci,
+# and needed if you want to consume the FCIDUMP export yourself.
+validate = ["pyscf>=2.3"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

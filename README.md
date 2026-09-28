@@ -26,9 +26,10 @@ flowchart LR
     A[DFT with QEpy] --> B[Wannier90: MLWFs]
     B --> C[Parse seedname_hr.dat]
     C --> D[Real-space cluster or H_k Bloch Hamiltonian]
-    D --> E[Second-quantized model: hopping + Hubbard U/V]
-    E --> F[Qiskit: qubit mapping]
-    F --> G[VQE ground state]
+    D --> E["Tensor core: h1, eri (tensors.py)"]
+    E --> F[Second-quantized FermionicOp]
+    F --> G[Qiskit: qubit mapping / VQE]
+    F --> H[FCIDUMP export: PySCF / block2]
 ```
 
 ## What's implemented
@@ -54,6 +55,15 @@ flowchart LR
   problem on real Wannier sites — see
   [Limitations](#limitations--known-caveats) for why building it from a
   single H(k) instead is usually *not* meaningful.
+- **Tensor-based core** (`tensors.py`): one-body `h1[p,q]` and two-body
+  `eri[p,q,r,s]` (chemist notation, spin-independent — see the module
+  docstring for why one shared tensor across spin sectors is physically
+  correct, not a simplification) are the source of truth. `ModelSpec`'s
+  `U`/`V_nn`/`mu`/double-counting are all built into (h1, eri) by
+  `tensors_from_Hk`; `ham_builder.fermionic_from_Hk`/`fermionic_from_cluster`
+  are thin, backward-compatible wrappers over this. This is also the seam an
+  ab initio Coulomb module plugs into: it only needs to produce an `eri`
+  tensor of the same shape (see `coulomb.py`).
 - **Second-quantized model builder** (`fermionic_from_Hk` /
   `fermionic_from_cluster`): one-body hopping, onsite Hubbard `U`,
   nearest-neighbor `V` (with duplicate-bond guarding — `(i,j)` and `(j,i)`
@@ -63,13 +73,19 @@ flowchart LR
 - **Qubit mapping**: Jordan–Wigner, parity (with a correctly wired two-qubit
   reduction via `num_particles`), or Bravyi–Kitaev.
 - **VQE**, via either a particle-number penalty (`penalize_number` +
-  hardware-efficient ansatz) or a number-conserving UCCSD ansatz
-  (`build_uccsd_ansatz` — read its docstring caveat about basis choice before
-  using it on a Wannier Hamiltonian).
+  hardware-efficient ansatz, works in any basis) or a number-conserving
+  UCCSD ansatz (`ham_builder.qubit_and_uccsd_from_tensors` — rotates (h1, eri)
+  to the one-body eigenbasis first, which UCCSD/HartreeFock require; see
+  [Limitations](#limitations--known-caveats) for why that rotation matters).
+- **FCIDUMP export** (`tensors.write_fcidump`): writes (h1, eri) in the
+  standard format read by PySCF/Molpro/block2, giving access to
+  exact-diagonalization (FCI) and DMRG reference calculations at sizes
+  Qiskit's statevector simulators can't reach. Cross-checked against PySCF's
+  own FCI solver in `tests/test_tensors.py`.
 - **Validation**: `benchmarks/h_chain_benchmark.py` checks the real-space
   cluster builder against the k-space Bloch Hamiltonian on a toy chain, and
-  compares VQE against exact diagonalization on a small Hubbard dimer. See
-  [Validation](#validation) below.
+  compares VQE (both approaches above) against exact diagonalization on a
+  small Hubbard dimer. See [Validation](#validation) below.
 
 ## Roadmap / not yet implemented
 
@@ -78,16 +94,22 @@ and are listed here instead so the gap is explicit:
 
 - **Ab initio Coulomb integrals** over the Wannier functions (`coulomb.py` is
   a scaffold with a documented `NotImplementedError` — it needs UNK real-space
-  grids and the Wannier90 U-matrix, neither of which is parsed yet). Until
-  this exists, `ModelSpec.U`/`V_nn` are hand-set model parameters, not DFT
-  output — see [Limitations](#limitations--known-caveats).
+  grids and the Wannier90 U-matrix, neither of which is parsed yet, plus care
+  with the periodic G=0 Coulomb-kernel divergence). Until this exists,
+  `ModelSpec.U`/`V_nn` are hand-set model parameters, not DFT output — see
+  [Limitations](#limitations--known-caveats). Once implemented, the
+  recommended validation is an isolated H₂-in-a-box run through the full
+  pipeline (QE → Wannier90 → `coulomb.eri_from_wannier` → FCI, via
+  `tensors.write_fcidump`) compared against a direct PySCF calculation on the
+  same molecule — a true end-to-end check, integrals included.
 - **Constrained RPA (cRPA)** for a screened U, built on top of the above.
 - **EOM-VQE / subspace VQE / Trotter time evolution** — sketched as
   unexecuted imports in `QE_qiskit.ipynb`, not a working code path.
 - **Execution on real quantum hardware** (IBM/IonQ/Quantinuum) — not
   connected; everything currently runs on Qiskit's local simulators.
-- **UCCSD in the correct (eigenbasis-rotated) basis** for Wannier
-  Hamiltonians — see the caveat in `ham_builder.build_uccsd_ansatz`.
+- **Fault-tolerant resource estimation** (double factorization / tensor
+  hypercontraction of `eri`) — natural once the tensor core is the source of
+  truth, not started.
 
 ## Validation
 
@@ -98,10 +120,17 @@ chain (so it runs without QE/Wannier90 installed) and checks two things:
    8-cell periodic supercell, reproduces the k-space Bloch Hamiltonian
    sampled at the same supercell's allowed k-points to numerical precision.
 2. **Interacting ground state**: for a 2-site Hubbard dimer (`U = 4|t|`), VQE
-   (particle-number-penalized, hardware-efficient ansatz) matches exact
-   diagonalization to ~1e-3|t|.
+   matches exact diagonalization two ways — particle-number-penalized
+   (hardware-efficient ansatz, ~1e-3|t|) and eigenbasis-rotated UCCSD
+   (~1e-9|t|, from the zero initial point).
 
 ![Validation benchmark](benchmarks/h_chain_benchmark.png)
+
+`tests/test_tensors.py` additionally cross-checks the tensor core against an
+independent classical solver: writing (h1, eri) to FCIDUMP and re-diagonalizing
+with **PySCF's own FCI solver** reproduces the same ground-state energy to
+~1e-13 (`pip install -e ".[validate]"` to run that specific test; it's skipped
+otherwise).
 
 Run it yourself: `python benchmarks/h_chain_benchmark.py`.
 
@@ -118,7 +147,11 @@ Run it yourself: `python benchmarks/h_chain_benchmark.py`.
   double-counts part of it. `ModelSpec.dc_scheme` implements the two standard
   corrections (FLL, AMF; Anisimov et al., PRB 48, 16929 (1993)) — pick one and
   supply `dc_n0` (the nominal DFT occupation per spin-orbital) explicitly;
-  there is no safe default to fall back on silently.
+  there is no safe default to fall back on silently. FLL uses the orbital's
+  *total* occupation N=2·n0 (U multiplies n↑n↓ for the whole orbital); AMF
+  uses n0 directly. The two agree at half filling (n0=1/2): both give U/2,
+  which is also the exact particle-hole-symmetric point of the single-band
+  Hubbard model — a useful sanity check if you're changing this code.
 - **Building the many-body problem from a single H(k) is usually not
   meaningful.** `fermionic_from_hr`/`fermionic_from_Hk` fold every periodic
   image's hopping into one cell's orbitals; adding a local `U` there is only
@@ -129,11 +162,15 @@ Run it yourself: `python benchmarks/h_chain_benchmark.py`.
   an explicit real-space cluster with boundary conditions you choose.
 - **UCCSD/HartreeFock assume the input orbitals are already the mean-field
   eigenbasis.** Wannier orbitals are a localized basis, not that eigenbasis;
-  using `build_uccsd_ansatz` directly on a Wannier Hamiltonian can converge to
-  the wrong state (this was hit and diagnosed while building the benchmark
-  above). Rotating the one-body Hamiltonian to its eigenbasis first — and the
-  interaction tensor along with it — is on the roadmap; until then, prefer the
-  particle-number-penalty approach for Wannier-basis problems.
+  calling `ham_builder.build_uccsd_ansatz` directly on a Wannier Hamiltonian
+  (rather than through `qubit_and_uccsd_from_tensors`) can converge to the
+  wrong state — this was hit and diagnosed while building the benchmark
+  above (VQE stuck ~0.3|t| above the true ground state). Use
+  `qubit_and_uccsd_from_tensors`, which rotates (h1, eri) to the one-body
+  eigenbasis first via `tensors.rotate_to_eigenbasis`; that rotation is a
+  unitary single-particle basis change, so it doesn't alter the physical
+  spectrum (verified in `tests/test_tensors.py`), only which determinant
+  counts as the mean-field reference.
 - **Unscreened, even once implemented, is not "correct."** A direct Coulomb
   integral over Wannier functions ignores screening from the rest of the
   electrons, typically overestimating `U` by a factor of a few for
@@ -164,6 +201,14 @@ data):
 
 ```bash
 pip install -e ".[dev]"
+pytest
+```
+
+To also run the PySCF cross-check of the tensor core / FCIDUMP export
+(optional — everything else works without it):
+
+```bash
+pip install -e ".[dev,validate]"
 pytest
 ```
 
