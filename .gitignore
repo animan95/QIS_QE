@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# QE / Wannier90 run artifacts
+work_w90/
+*.save/
+*.wout
+*.amn
+*.mmn
+*.eig
+*.nnkp
+*.chk
+qepy_*.log

@@ -1,0 +1,19 @@
+# Core numerics
+numpy>=1.24
+scipy>=1.10
+matplotlib>=3.7
+
+# Quantum computing stack (pinned to a combination verified to work together;
+# qiskit>=1.3 changed the Estimator primitive interface in a way that breaks
+# qiskit-algorithms<0.4's VQE -- if you upgrade one, upgrade/test the others)
+qiskit>=1.1,<1.3
+qiskit-nature>=0.7,<0.9
+qiskit-algorithms>=0.3,<0.4
+
+# Dev / testing
+pytest>=7.0
+
+# NOT on PyPI: qepy, and the Quantum ESPRESSO (pw.x, pw2wannier90.x) and
+# Wannier90 (wannier90.x) binaries used by wannierize_qepy.py. These must be
+# built/installed separately -- see README.md "Installation" for pointers.
+# qepy
